@@ -1,0 +1,1 @@
+=== inventory dump ts=1770114015 text=Talisman effects reapplied for new player instance.
