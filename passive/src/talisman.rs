@@ -13,7 +13,6 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::env;
 use std::path::PathBuf;
-use std::fmt::Display;
 
 /// Track last applied special effects per-player.
 struct TalismanState {
@@ -39,11 +38,9 @@ fn accessory_speffects(acc: &EQUIP_PARAM_ACCESSORY_ST) -> impl Iterator<Item = i
 fn collect_inventory_accessory_speffects(player: &PlayerIns) -> HashSet<i32> {
     let mut out = HashSet::new();
 
-    // Get FD4ParamRepository singleton.
     let repo = unsafe { FD4ParamRepository::instance().unwrap() };
 
-    // Access PlayerGameData then the EquipInventoryData contained within it.
-    let pg = player.player_game_data.as_ref();
+    let pg = unsafe { player.player_game_data.as_ref() };
     let inv = &pg.equipment.equip_inventory_data.items_data;
 
     for entry in InventoryItemsData::items(inv) {
@@ -51,13 +48,9 @@ fn collect_inventory_accessory_speffects(player: &PlayerIns) -> HashSet<i32> {
             continue;
         }
 
-        // `entry.item_id.param_id()` returns a plain `u32` (ItemId -> param id).
         let param_id = entry.item_id.param_id();
 
-        // Lookup accessory param row for the item param id.
-        if let Some(acc) = repo.get::<EQUIP_PARAM_ACCESSORY_ST>(param_id) {
-            // Defensive: sanity-check that this really "is" an accessory struct
-            // (should always be true when we checked the category, but keep it safe).
+        if let Some(acc) = unsafe { repo.get::<EQUIP_PARAM_ACCESSORY_ST>(param_id) } {
             if EquipParam::as_accessory(acc).is_none() {
                 continue;
             }
@@ -71,23 +64,6 @@ fn collect_inventory_accessory_speffects(player: &PlayerIns) -> HashSet<i32> {
     out
 }
 
-/// Ensure exhaustable and proc-status values are set to their max after
-/// talisman effects have been applied. This makes the player's current HP/FP/Stamina
-/// and proc-status buildup (poison/rot/bleed/death/frost/sleep/madness) full.
-pub fn max_out_exhaustables_and_statuses(player: &mut PlayerIns) {
-        player.chr_ins.module_container.data.hp = player.chr_ins.module_container.data.max_hp;
-        player.chr_ins.module_container.data.fp = player.chr_ins.module_container.data.max_fp;
-
-         // Fill proc-status timers (poison, rot, bleed, death, frost, sleep, madness)
-         // to their per-status max so "buildup" is considered full.
-        for i in 0..player.player_game_data.proc_status_timer_max.len() {
-            player.player_game_data.proc_status_timers[i] = player.player_game_data.proc_status_timer_max[i];
-        }
-        logger("Maxed out exhaustables and statuses.\n");
-        logger(&player.chr_ins.module_container.data.fp.to_string());
-        logger(&player.chr_ins.module_container.data.max_fp.to_string());
-    }
-
 
 /// Called every frame for the main player. Automatically applies/removes
 /// talisman SP effects when the player loads or the inventory changes.
@@ -96,18 +72,6 @@ pub fn tick(player: &mut PlayerIns) {
     let current_sps = collect_inventory_accessory_speffects(player);
 
     let mut guard = TALISMAN_STATE.lock().unwrap();
-
-    // If a delayed max-out is pending and its deadline passed, run it now.
-    if let Some(state) = guard.as_mut() {
-        if let Some(deadline) = state.wait_until {
-            if Instant::now() >= deadline {
-                // best-effort: call max out on the current player instance
-                max_out_exhaustables_and_statuses(player);
-                state.wait_until = None;
-                logger("Delayed max_out executed.\n");
-            }
-        }
-    }
 
     match guard.as_mut() {
         None => {
@@ -137,7 +101,6 @@ pub fn tick(player: &mut PlayerIns) {
             // Update stored state and schedule a delayed max-out instead of sleeping.
             s.player_addr = player_addr;
             s.last_sps = current_sps;
-            s.wait_until = Some(Instant::now() + Duration::from_millis(2000));
         }
         Some(s) => {
             // Same player: compute diffs and apply/remove immediately.
